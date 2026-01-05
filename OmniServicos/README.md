@@ -50,12 +50,6 @@ Eles se conectam aos módulos principais, podendo gerar dados no **CRM** (client
 
 ---
 
-## 🔗 Relação entre módulos
-
-O diagrama abaixo mostra como **CRM, ERP, PDV e plugins** interagem:
-
-![Mapa da arquitetura](A_flowchart-style_digital_illustration_visually_re.png)
-
 **Explicação do fluxo:**
 1. **CRM** → gerencia clientes e oportunidades, envia informações para ERP ou PDV.
 2. **ERP** → organiza toda a operação da empresa: estoque, finanças, compras. Recebe dados de vendas do PDV e clientes do CRM.

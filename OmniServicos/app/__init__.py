@@ -14,10 +14,11 @@ def create_app():
     migrate.init_app(app, db)
 
     # Blueprints dos módulos
+    app.register_blueprint(command_center_bp, url_prefix='/')
     app.register_blueprint(crm_bp, url_prefix="/crm")
     app.register_blueprint(erp_bp, url_prefix="/erp")
     app.register_blueprint(pdv_bp, url_prefix="/pdv")
-    app.register_blueprint(command_center_bp, url_prefix='/dashboard')
+    
 
     # Blueprints dos plugins
     register_plugins(app)
