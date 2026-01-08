@@ -1,60 +1,76 @@
-from . import erp_bp
-from flask import jsonify
-from flask import request
+from flask import jsonify, request
+from flask_jwt_extended import jwt_required
+from app.modules.auth.context import current_user
+from app.modules.auth.decorators import roles_required
+from app.modules.auth.roles import MANAGER, ADMIN
 from app.models import Produto
-from app.extensions import db 
+from app.extensions import db
+from . import erp_bp
 
-#### Gerenciamento de produtos
-@erp_bp.route("/list_products", methods=["GET"])
+
+@erp_bp.route("/products", methods=["GET"])
+@jwt_required()
 def listar_produtos():
-    # --- Paginação ---
+    user = current_user()
+    empresa_id = user["empresa_id"]
+
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 20, type=int)  # default 20 por página
-    per_page = min(per_page, 100)  # limite máximo de 100 por request
+    per_page = min(request.args.get("per_page", 20, type=int), 100)
 
-    # --- Filtros ---
-    busca = request.args.get("busca", type=str)        # busca por nome ou SKU
-    categoria = request.args.get("categoria", type=str)
+    query = Produto.query.filter_by(empresa_id=empresa_id)
 
-    query = Produto.query
-
-    if busca:
-        query = query.filter(
-            (Produto.nome.ilike(f"%{busca}%")) |
-            (Produto.cd_sku.ilike(f"%{busca}%"))
-        )
-    if categoria:
-        query = query.filter_by(categoria=categoria)
-
-    # --- Paginação ---
-    paginated = query.order_by(Produto.nome).paginate(page=page, per_page=per_page, error_out=False)
-
-    produtos = [p.to_dict() for p in paginated.items]
+    paginated = query.paginate(
+        page=page, per_page=per_page, error_out=False
+    )
 
     return jsonify({
-        "produtos": produtos,
-        "total": paginated.total,
-        "page": paginated.page,
-        "per_page": paginated.per_page,
-        "pages": paginated.pages
+        "produtos": [p.to_dict() for p in paginated.items],
+        "total": paginated.total
     })
 
 
-# Criar produto
-@erp_bp.route("/list_products", methods=["POST"])
+
+from sqlalchemy import and_
+from app.modules.auth.context import current_user
+
+@erp_bp.route("/products", methods=["POST"])
+@roles_required(MANAGER, ADMIN)
 def criar_produto():
     data = request.get_json()
-    novo_produto = Produto(
-        cd_sku=data.get("cd_sku"),
+    user = current_user()
+
+    empresa_id = user["empresa_id"]
+    cd_sku = data.get("cd_sku")
+
+    if not cd_sku:
+        return jsonify({"error": "cd_sku é obrigatório"}), 400
+
+    # 🔎 valida duplicidade SOMENTE dentro da empresa do JWT
+    sku_existe = Produto.query.filter(
+        Produto.empresa_id == empresa_id,
+        Produto.cd_sku == cd_sku
+    ).first()
+
+    if sku_existe:
+        return jsonify({
+            "error": "SKU já cadastrado para esta empresa",
+            "cd_sku": cd_sku
+        }), 409
+
+    produto = Produto(
+        empresa_id=empresa_id,
+        criado_por=user["id"],
+        cd_sku=cd_sku,
         cd_ean=data.get("cd_ean"),
         nome=data.get("nome"),
         descricao=data.get("descricao"),
         categoria=data.get("categoria"),
         vl_compra=data.get("vl_compra", 0.0),
         porcent_lucro=data.get("porcent_lucro", 0.0),
-        vl_venda=data.get("vl_venda", 0.0),   # recebe do front
+        vl_venda=data.get("vl_venda", 0.0),
         quantidade=data.get("quantidade", 0),
-        quantidade_minima= data.get("quantidade_minima",0),
+        quantidade_minima=data.get("quantidade_minima", 0),
+        quantidade_alerta=data.get("quantidade_alerta", 0),
         peso_kg=data.get("peso_kg", 0.0),
         largura_cm=data.get("largura_cm", 0.0),
         altura_cm=data.get("altura_cm", 0.0),
@@ -62,29 +78,51 @@ def criar_produto():
         foto_url=data.get("foto_url"),
         ativo=data.get("ativo", True)
     )
-    db.session.add(novo_produto)
-    db.session.commit()
-    return jsonify(novo_produto.to_dict()), 201
+
+    try:
+        db.session.add(produto)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({"error": "Erro ao salvar produto"}), 500
+
+    return jsonify(produto.to_dict()), 201
 
 
-# Atualizar produto
-@erp_bp.route("/list_products/<int:produto_id>", methods=["PUT"])
+
+@erp_bp.route("/products/<int:produto_id>", methods=["PUT"])
+@roles_required(MANAGER, ADMIN)
 def atualizar_produto(produto_id):
-    produto = Produto.query.get_or_404(produto_id)
+    produto = Produto.query.filter_by(
+        id=produto_id,
+        empresa_id=g.current_user.empresa_id
+    ).first_or_404()
+
     data = request.get_json()
-    for campo in ["cd_sku","cd_ean","nome","descricao","categoria",
-                    "vl_compra","porcent_lucro","vl_venda","quantidade",
-                    "peso_kg","largura_cm","altura_cm","profundidade_cm",
-                    "foto_url","ativo"]:
+
+    campos_permitidos = [
+        "cd_sku", "cd_ean", "nome", "descricao", "categoria",
+        "vl_compra", "porcent_lucro", "vl_venda",
+        "quantidade", "quantidade_minima", "quantidade_alerta",
+        "peso_kg", "largura_cm", "altura_cm", "profundidade_cm",
+        "foto_url", "ativo"
+    ]
+
+    for campo in campos_permitidos:
         if campo in data:
             setattr(produto, campo, data[campo])
+
     db.session.commit()
     return jsonify(produto.to_dict())
 
-# Deletar produto
-@erp_bp.route("/list_products/<int:produto_id>", methods=["DELETE"])
+
+@erp_bp.route("/products/<int:produto_id>", methods=["DELETE"])
+@roles_required(MANAGER, ADMIN)
 def deletar_produto(produto_id):
-    produto = Produto.query.get_or_404(produto_id)
+    produto = Produto.query.filter_by(
+        id=produto_id,
+        empresa_id=g.current_user.empresa_id
+    ).first_or_404()
 
     db.session.delete(produto)
     db.session.commit()
@@ -93,6 +131,3 @@ def deletar_produto(produto_id):
         "message": "Produto removido com sucesso",
         "produto_id": produto_id
     }), 200
-    
-
-#### Gerenciamento do estoque 

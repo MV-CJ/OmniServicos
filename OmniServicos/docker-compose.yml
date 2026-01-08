@@ -18,7 +18,7 @@ services:
     image: postgres:16
     container_name: omni_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_USER: omni_user
       POSTGRES_PASSWORD: omni_pass
